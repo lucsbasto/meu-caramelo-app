@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 import MapView, { Marker, Region } from "react-native-maps";
-import * as Location from "expo-location";
 
 import { PointDetailsSheet } from "@/components/point-details-sheet";
 import { ThemedText } from "@/components/themed-text";
@@ -11,16 +11,21 @@ import { ThemedView } from "@/components/themed-view";
 import { Colors } from "@/constants/theme";
 import {
   ensureUserId,
+  getMyReputation,
   getPointOverview,
   getPointPhotos,
   getPointsInBBox,
   getPointUpdates,
-  type FeedingPointMapItem,
   submitPointUpdate,
+  trackEvent,
+  type FeedingPointMapItem,
   uploadPointPhoto,
 } from "@/lib/feeding-points";
 import { clusterKey, DEFAULT_REGION, formatDistanceMeters, PROXIMITY_METERS } from "@/lib/geo";
+import { supabase } from "@/lib/supabase";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+
+type RealtimeState = "connecting" | "live" | "stale";
 
 type Cluster =
   | {
@@ -71,6 +76,7 @@ const clusterPoints = (points: FeedingPointMapItem[], region: Region): Cluster[]
 };
 
 export default function MapScreen() {
+  const queryClient = useQueryClient();
   const colorScheme = useColorScheme() ?? "light";
   const palette = Colors[colorScheme];
 
@@ -82,6 +88,8 @@ export default function MapScreen() {
   const [optimisticStatus, setOptimisticStatus] = useState<"full" | "empty" | "unknown" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
+  const lastRealtimeEventRef = useRef(Date.now());
 
   const locationQuery = useQuery({
     queryKey: ["viewer-location"],
@@ -133,6 +141,114 @@ export default function MapScreen() {
     queryFn: async () => getPointPhotos(selectedPointId as string),
     enabled: Boolean(selectedPointId),
   });
+
+  const reputationQuery = useQuery({
+    queryKey: ["my-reputation"],
+    queryFn: async () => getMyReputation(),
+  });
+
+  useEffect(() => {
+    let isCancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let staleTimer: ReturnType<typeof setInterval> | null = null;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    const invalidate = async (pointId?: string) => {
+      await queryClient.invalidateQueries({ queryKey: ["map-points"] });
+      if (!pointId || pointId === selectedPointId) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["point-overview", selectedPointId] }),
+          queryClient.invalidateQueries({ queryKey: ["point-updates", selectedPointId] }),
+          queryClient.invalidateQueries({ queryKey: ["point-photos", selectedPointId] }),
+          queryClient.invalidateQueries({ queryKey: ["my-reputation"] }),
+        ]);
+      }
+    };
+
+    const connect = (attempt: number) => {
+      if (isCancelled) {
+        return;
+      }
+
+      setRealtimeState("connecting");
+      channel = supabase
+        .channel(`points-realtime-${selectedPointId ?? "all"}-${attempt}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "feeding_points" }, async (payload) => {
+          lastRealtimeEventRef.current = Date.now();
+          setRealtimeState("live");
+          const pointId = (payload.new as { id?: string } | null)?.id ?? (payload.old as { id?: string } | null)?.id;
+          await invalidate(pointId);
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "feeding_updates" }, async (payload) => {
+          lastRealtimeEventRef.current = Date.now();
+          setRealtimeState("live");
+          const pointId =
+            (payload.new as { point_id?: string } | null)?.point_id ??
+            (payload.old as { point_id?: string } | null)?.point_id;
+          await invalidate(pointId);
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "feeding_photos" }, async (payload) => {
+          lastRealtimeEventRef.current = Date.now();
+          setRealtimeState("live");
+          const pointId =
+            (payload.new as { point_id?: string } | null)?.point_id ??
+            (payload.old as { point_id?: string } | null)?.point_id;
+          await invalidate(pointId);
+        })
+        .subscribe(async (status) => {
+          if (isCancelled) {
+            return;
+          }
+
+          if (status === "SUBSCRIBED") {
+            setRealtimeState("live");
+            lastRealtimeEventRef.current = Date.now();
+            return;
+          }
+
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            setRealtimeState("stale");
+            try {
+              await trackEvent({
+                eventName: "client_error",
+                pointId: selectedPointId ?? undefined,
+                metadata: { stage: "realtime_channel", status, attempt },
+              });
+            } catch {}
+
+            if (channel) {
+              void supabase.removeChannel(channel);
+            }
+
+            const delay = Math.min(30_000, Math.max(1_500, 2 ** attempt * 1_000));
+            retryTimer = setTimeout(() => connect(attempt + 1), delay);
+          }
+        });
+    };
+
+    connect(0);
+
+    staleTimer = setInterval(() => {
+      const isStale = Date.now() - lastRealtimeEventRef.current > 45_000;
+      if (isStale) {
+        setRealtimeState("stale");
+        void queryClient.invalidateQueries({ queryKey: ["map-points"] });
+      }
+    }, 15_000);
+
+    return () => {
+      isCancelled = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+      }
+      if (staleTimer) {
+        clearInterval(staleTimer);
+      }
+      if (channel) {
+        void supabase.removeChannel(channel);
+      }
+    };
+  }, [queryClient, selectedPointId]);
 
   const statusColor = (status: "full" | "empty" | "unknown", isStale: boolean) => {
     if (isStale) {
@@ -189,15 +305,34 @@ export default function MapScreen() {
         overviewQuery.refetch(),
         updatesQuery.refetch(),
         photosQuery.refetch(),
+        reputationQuery.refetch(),
       ]);
       setOptimisticStatus(null);
     } catch (error) {
       setOptimisticStatus(null);
       setActionError((error as Error).message);
+      try {
+        await trackEvent({
+          eventName: "client_error",
+          pointId: selectedPoint.id,
+          metadata: {
+            stage: "submit_action",
+            status,
+            message: (error as Error).message,
+          },
+        });
+      } catch {}
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  const realtimeLabel =
+    realtimeState === "live"
+      ? "Realtime ativo"
+      : realtimeState === "connecting"
+        ? "Conectando realtime..."
+        : "Realtime em reconexao";
 
   return (
     <ThemedView style={styles.container}>
@@ -206,6 +341,7 @@ export default function MapScreen() {
         <ThemedText>
           {locationDenied ? "Localizacao negada - modo manual ativo" : "Localizacao ativa"}
         </ThemedText>
+        <ThemedText>{realtimeLabel}</ThemedText>
         <TouchableOpacity
           style={styles.filterButton}
           onPress={() => setShowNearbyOnly((current) => !current)}
@@ -295,6 +431,7 @@ export default function MapScreen() {
                 photos={photosQuery.data ?? []}
                 updates={updatesQuery.data ?? []}
                 optimisticStatus={optimisticStatus}
+                myReputation={reputationQuery.data ?? null}
                 isSubmitting={isSubmitting}
                 actionError={actionError}
                 onMarkFull={() => submitAction("full", true)}

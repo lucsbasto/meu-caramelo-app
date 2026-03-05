@@ -98,3 +98,40 @@ Checks:
 - `npm run lint` (mobile-app) OK
 - `npx tsc --noEmit` (mobile-app) OK
 - Final manual runtime validation on Android/Web pending device/emulator pass
+
+15. Sprint 3 planning and scope lock
+Agent: `project-planner`
+Status: done
+Outputs:
+- `docs/sprint-3-realtime-validation.md` invocation log + WS plan gate
+
+16. Sprint 3 realtime and stale-cache resilience (WS1)
+Agents: `backend-architect`, `mobile-developer`
+Status: done
+Outputs:
+- `mobile-app/app/(tabs)/index.tsx`
+- `supabase/migrations/202603050004_sprint3_realtime_validation_reputation.sql`
+
+17. Sprint 3 photo validation pipeline and audit logs (WS2)
+Agents: `backend-architect`, `security-auditor`
+Status: done
+Outputs:
+- `supabase/functions/photo-validation/index.ts`
+- `mobile-app/lib/feeding-points.ts`
+- `supabase/migrations/202603050004_sprint3_realtime_validation_reputation.sql`
+
+18. Sprint 3 reputation automation and badge display (WS3)
+Agents: `backend-architect`, `mobile-developer`
+Status: done
+Outputs:
+- `supabase/migrations/202603050004_sprint3_realtime_validation_reputation.sql`
+- `mobile-app/components/point-details-sheet.tsx`
+- `mobile-app/lib/feeding-points.ts`
+
+19. Sprint 3 metrics and observability baseline (WS4)
+Agents: `backend-architect`, `test-engineer`
+Status: done
+Outputs:
+- `supabase/migrations/202603050004_sprint3_realtime_validation_reputation.sql`
+- `mobile-app/lib/feeding-points.ts`
+- `mobile-app/app/(tabs)/index.tsx`

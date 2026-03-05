@@ -51,7 +51,18 @@ export type FeedingPhoto = {
   update_id: string | null;
   user_id: string;
   storage_path: string;
+  validation_status: "pending" | "approved" | "suspect" | "rejected";
+  validation_reason: string | null;
+  validated_at: string | null;
   created_at: string;
+};
+
+type ReputationLevel = "iniciante" | "protetor" | "guardiao" | "heroi";
+
+export type UserReputation = {
+  userId: string;
+  points: number;
+  level: ReputationLevel;
 };
 
 export const getPointsInBBox = async (bbox: BBox, viewer: ViewerLocation) => {
@@ -101,7 +112,7 @@ export const getPointUpdates = async (pointId: string) => {
 export const getPointPhotos = async (pointId: string) => {
   const { data, error } = await supabase
     .from("feeding_photos")
-    .select("id, point_id, update_id, user_id, storage_path, created_at")
+    .select("id, point_id, update_id, user_id, storage_path, validation_status, validation_reason, validated_at, created_at")
     .eq("point_id", pointId)
     .order("created_at", { ascending: false });
 
@@ -115,6 +126,7 @@ export const getPointPhotos = async (pointId: string) => {
 export const ensureUserId = async () => {
   const current = await supabase.auth.getUser();
   if (current.data.user?.id) {
+    await supabase.rpc("ensure_public_user", { p_user_id: current.data.user.id });
     return current.data.user.id;
   }
 
@@ -127,7 +139,61 @@ export const ensureUserId = async () => {
     throw new Error("Could not create anonymous session.");
   }
 
+  await supabase.rpc("ensure_public_user", { p_user_id: signIn.data.user.id });
   return signIn.data.user.id;
+};
+
+const toLevel = (points: number): ReputationLevel => {
+  if (points >= 200) {
+    return "heroi";
+  }
+  if (points >= 100) {
+    return "guardiao";
+  }
+  if (points >= 30) {
+    return "protetor";
+  }
+  return "iniciante";
+};
+
+export const getMyReputation = async (): Promise<UserReputation> => {
+  const userId = await ensureUserId();
+  const { data, error } = await supabase
+    .from("users")
+    .select("reputation_points")
+    .eq("id", userId)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  const points = data?.reputation_points ?? 0;
+  return {
+    userId,
+    points,
+    level: toLevel(points),
+  };
+};
+
+export const trackEvent = async (params: {
+  eventName: string;
+  source?: "client" | "edge" | "system";
+  pointId?: string;
+  metadata?: Record<string, unknown>;
+}) => {
+  const userId = await ensureUserId();
+  const { error } = await supabase.rpc("track_event", {
+    p_event_name: params.eventName,
+    p_source: params.source ?? "client",
+    p_user_id: userId,
+    p_point_id: params.pointId ?? null,
+    p_metadata: params.metadata ?? {},
+  });
+
+  if (error) {
+    throw error;
+  }
 };
 
 export const uploadPointPhoto = async (pointId: string, userId: string, imageUri: string) => {
@@ -176,10 +242,31 @@ export const submitPointUpdate = async (params: {
       update_id: updateInsert.data.id,
       user_id: userId,
       storage_path: params.photoPath,
-    });
+    }).select("id").single();
 
     if (photoInsert.error) {
       throw photoInsert.error;
+    }
+
+    const validationInvoke = await supabase.functions.invoke("photo-validation", {
+      body: {
+        photoId: photoInsert.data.id,
+      },
+    });
+
+    if (validationInvoke.error) {
+      try {
+        await trackEvent({
+          eventName: "edge_error",
+          source: "client",
+          pointId: params.pointId,
+          metadata: {
+            stage: "invoke_photo_validation",
+            message: validationInvoke.error.message,
+            photo_id: photoInsert.data.id,
+          },
+        });
+      } catch {}
     }
   }
 
@@ -194,4 +281,15 @@ export const submitPointUpdate = async (params: {
   if (pointUpdate.error) {
     throw pointUpdate.error;
   }
+
+  try {
+    await trackEvent({
+      eventName: "point_status_updated",
+      pointId: params.pointId,
+      metadata: {
+        status: params.status,
+        with_photo: Boolean(params.photoPath),
+      },
+    });
+  } catch {}
 };

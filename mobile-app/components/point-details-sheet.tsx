@@ -4,7 +4,13 @@ import { ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
-import type { FeedingPhoto, FeedingPointMapItem, FeedingPointOverview, FeedingUpdate } from "@/lib/feeding-points";
+import type {
+  FeedingPhoto,
+  FeedingPointMapItem,
+  FeedingPointOverview,
+  FeedingUpdate,
+  UserReputation,
+} from "@/lib/feeding-points";
 import { formatDistanceMeters, toDisplayDate } from "@/lib/geo";
 import { supabase } from "@/lib/supabase";
 
@@ -14,6 +20,7 @@ type Props = {
   photos: FeedingPhoto[];
   updates: FeedingUpdate[];
   optimisticStatus: "full" | "empty" | "unknown" | null;
+  myReputation: UserReputation | null;
   isSubmitting: boolean;
   actionError: string | null;
   onMarkFull: () => void;
@@ -29,6 +36,7 @@ export function PointDetailsSheet({
   photos,
   updates,
   optimisticStatus,
+  myReputation,
   isSubmitting,
   actionError,
   onMarkFull,
@@ -51,6 +59,9 @@ export function PointDetailsSheet({
         </ThemedText>
         <ThemedText>Atualizado: {toDisplayDate(overview?.last_update_at ?? point.updated_at)}</ThemedText>
         <ThemedText>Voluntarios: {overview?.distinct_volunteers ?? 0}</ThemedText>
+        <ThemedText>
+          Minha reputacao: {myReputation?.points ?? 0} ({myReputation?.level ?? "iniciante"})
+        </ThemedText>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photoRow}>
@@ -64,6 +75,10 @@ export function PointDetailsSheet({
               <Image source={{ uri: getPhotoPublicUrl(photo.storage_path) }} style={styles.photo} contentFit="cover" />
               <ThemedText style={styles.metaText}>{toDisplayDate(photo.created_at)}</ThemedText>
               <ThemedText style={styles.metaText}>Usuario: {photo.user_id.slice(0, 8)}</ThemedText>
+              <ThemedText style={styles.metaText}>
+                Validacao: {photo.validation_status}
+                {photo.validation_reason ? ` (${photo.validation_reason})` : ""}
+              </ThemedText>
             </View>
           ))
         )}
