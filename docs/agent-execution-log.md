@@ -56,3 +56,45 @@ Outputs:
 - `supabase/migrations/202603050002_supabase_ws3_setup.sql`
 - `supabase/functions/photo-validation/*`
 - `npx supabase db push` applied to linked remote project
+
+9. Sprint 2 planning and scope lock
+Agent: `project-planner`
+Status: done
+Outputs:
+- `docs/sprint-2-core-flows.md` invocation log + task completion tracking
+
+10. Sprint 2 map core implementation (WS1)
+Agent: `mobile-developer`
+Status: done
+Outputs:
+- `mobile-app/app/(tabs)/index.tsx`
+- `mobile-app/lib/geo.ts`
+
+11. Sprint 2 data contracts for map/details (WS1/WS2)
+Agent: `backend-architect`
+Status: done
+Outputs:
+- `supabase/migrations/202603050003_sprint2_core_flows.sql`
+- `mobile-app/lib/feeding-points.ts`
+
+12. Sprint 2 point details/history flow (WS2)
+Agent: `mobile-developer`
+Status: done
+Outputs:
+- `mobile-app/components/point-details-sheet.tsx`
+- `mobile-app/app/(tabs)/index.tsx`
+
+13. Sprint 2 volunteer actions and security guardrails (WS3)
+Agents: `mobile-developer`, `security-auditor`
+Status: done
+Outputs:
+- `mobile-app/app/(tabs)/index.tsx`
+- `mobile-app/lib/feeding-points.ts`
+
+14. Sprint 2 quality gate execution (WS4)
+Agent: `test-engineer`
+Status: done
+Checks:
+- `npm run lint` (mobile-app) OK
+- `npx tsc --noEmit` (mobile-app) OK
+- Final manual runtime validation on Android/Web pending device/emulator pass
