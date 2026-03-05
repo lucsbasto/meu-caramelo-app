@@ -1,0 +1,14 @@
+{
+  "name": "meu-caramelo",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:down:volumes": "docker compose down -v",
+    "db:migrate": "node scripts/db-migrate.js",
+    "db:reset": "npm run db:down:volumes && npm run db:up && npm run db:migrate",
+    "mobile:install": "npm --prefix mobile-app install",
+    "mobile:lint": "npm --prefix mobile-app run lint"
+  }
+}
